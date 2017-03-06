@@ -1,0 +1,248 @@
+% Input Rack and Ronot1 Controller
+
+% We first ensure that we can distinguish the doors, and record their position.
+ %Controller 1 Datatype
+sort Input_Mode = struct Initial | Normal;
+	Room_mode = struct Initial_Room | Normal_Room | Extract_Air_Room;
+	Sluice_Mode = struct Initial_Sluice | Input | Output | Stuck;
+    Door = struct d1 | d2 | d3 | d4;
+    Pressure = struct high | low; 
+    DoorStatus = struct open | closed | stuck;
+    PumpValue = struct remove_air | inject_air;
+	robot  = struct r1 | r2 | r3;
+	Sluice = struct s1 | s2;
+	Position = struct input_rack | output_rack | sluice1 | sluice2 | waiting_rack_in | waiting_rack_out | ipu;
+	
+sort Count;
+cons zero, one, two: Count;
+map	 inc: Count -> Count;
+	 not_overflow: Count -> Bool;
+eqn	 inc(zero) = one;
+	 inc(one) = two;
+	 inc(two) = two;
+	 not_overflow(zero) = true;
+	 not_overflow(one) = true;
+	 not_overflow(two) = false;
+	 
+map	allowed_move: Position#Position -> Bool;
+eqn	allowed_move(input_rack,sluice1) = true;
+	allowed_move(input_rack,sluice2) = true;
+	allowed_move(sluice1,output_rack) = true;
+	allowed_move(sluice2,output_rack) = true;
+	allowed_move(sluice1,waiting_rack_in) = true;
+	allowed_move(sluice2,waiting_rack_in) = true;
+	allowed_move(waiting_rack_in,ipu) = true;
+	allowed_move(ipu,waiting_rack_out) = true;
+	allowed_move(waiting_rack_out,sluice1) = true;
+	allowed_move(waiting_rack_out,sluice2) = true;
+	allowed_move(input_rack,input_rack) = false;
+
+map	sluice_pos: Sluice -> Position;
+eqn	sluice_pos(s1) = sluice1;
+	sluice_pos(s2) = sluice2;
+
+% External actions
+act in_wafer_detect: Bool;
+	robot_move: Position # Position;
+	robot_finish : robot;
+	activate_IPU;
+	IPU_finish;
+	activate_roomPump: PumpValue;
+	pressure_room : Pressure;
+	open_door: Door;
+	close_door: Door;
+	door_status: Door # DoorStatus;
+	activate_sluicePump: Sluice # PumpValue;
+	pressure_sluice: Sluice # Pressure;
+	stuck_alarm: Sluice;
+
+% Internal actions												Parameter
+	s_wf_send_sluice1,  r_wf_send_sluice1,  c_wf_send_sluice1:  Sluice;
+	s_wf_send_sluice2,  r_wf_send_sluice2,  c_wf_send_sluice2:  Sluice;
+	s_wf_rcv_sluice1,   r_wf_rcv_sluice1,   c_wf_rcv_sluice1:   Sluice;
+	s_wf_rcv_sluice2,   r_wf_rcv_sluice2,   c_wf_rcv_sluice2:   Sluice;
+	s_no_wafer1,        r_no_wafer1, 		c_no_wafer1:        Sluice;
+	s_no_wafer2,        r_no_wafer2, 		c_no_wafer2:        Sluice;
+	s_start_process,    r_start_process, 	c_start_process;
+	s_ready_wf_in1,		r_ready_wf_in1,		c_ready_wf_in1:     Sluice;
+	s_ready_wf_in2,		r_ready_wf_in2,		c_ready_wf_in2:     Sluice;
+	s_ready_wf_out1,	r_ready_wf_out1,	c_ready_wf_out1: 	Sluice;
+	s_ready_wf_out2,	r_ready_wf_out2,	c_ready_wf_out2: 	Sluice;		
+    s_main_room_ready,	r_main_room_ready,	c_main_room_ready;
+	s_ipu_ready_out,	r_ipu_ready_out,	c_ipu_ready_out;
+	s_ipu_ready_in,		r_ipu_ready_in,		c_ipu_ready_in;
+	s_wf_send_print,	r_wf_send_print,	c_wf_send_print;
+	s_wf_rcv_print,		r_wf_rcv_print,		c_wf_rcv_print;
+	s_sluice_sinc,		r_sluice_sinc,		c_sluice_sinc;
+	
+% Input Rack and Robot1 Controller
+% Parameters 
+% 	mode: 			Specify the Operation Mode. Initial, or Normal mode.
+%	input_wafer:	Specify if there are wafers in the input rack.
+proc InputRack_Robot1_Controller(mode: Input_Mode, input_wafer: Bool) = 	
+		(mode == Initial) -> in_wafer_detect(true) . s_start_process . r_main_room_ready . InputRack_Robot1_Controller(Normal,true)
+
+		+(mode == Normal) -> ( sum s : Sluice.( r_ready_wf_in1(s) . ((input_wafer == true) -> robot_move(input_rack,sluice_pos(s)) . robot_finish(r1) . s_wf_send_sluice1(s) <> s_no_wafer1(s)) .
+												 (sum i:Bool. in_wafer_detect(i) . InputRack_Robot1_Controller(Normal,i)))
+						       + sum s : Sluice. (r_ready_wf_out1(s) . robot_move(sluice_pos(s),output_rack) . robot_finish(r1) . s_wf_rcv_sluice1(s) . InputRack_Robot1_Controller(Normal,input_wafer)));
+
+%  Internal process for Sluices
+proc Air_Injection_s1 = 
+	close_door(d2) . door_status(d2,closed) . activate_sluicePump(s1,inject_air) . pressure_sluice(s1,low) .
+	open_door(d1) ;
+
+proc Air_Remove_s1 = 
+	close_door(d1) . door_status(d1,closed) . activate_sluicePump(s1,remove_air) . pressure_sluice(s1,high) .
+	open_door(d2) ;
+
+proc Air_Injection_s2 =
+	close_door(d4) . door_status(d4,closed) . activate_sluicePump(s2,inject_air) . pressure_sluice(s2,low) .
+	open_door(d3) ;
+
+proc Air_Remove_s2 =
+	close_door(d3) . door_status(d3,closed) . activate_sluicePump(s2,remove_air) . pressure_sluice(s2,high) .
+	open_door(d4) ;
+
+% Sluice Controller
+% Parameters 
+% 	mode: 	Specify the Sluice Mode. Initial, Input, Output or Stuck modes.
+proc Sluice1(mode: Sluice_Mode) = r_sluice_sinc . (
+	 (mode == Initial_Sluice) -> ( close_door(d1) . door_status(d1,closed) . close_door(d2) . door_status(d2,closed) . Air_Injection_s1 . 
+						   (door_status(d1,open) . Sluice1(Input) + door_status(d1,stuck) . Sluice1(Stuck))
+						  )
+	+(mode == Input)   -> ( s_ready_wf_in1(s1) . ( r_wf_send_sluice1(s1) . Air_Remove_s1 . (door_status(d2,open) + door_status(d2,stuck) . Sluice1(Stuck)) .
+							                       s_ready_wf_in2(s1) . r_wf_rcv_sluice2(s1) . Sluice1(Output) 
+												 + r_no_wafer1(s1) . Air_Remove_s1 . (door_status(d2,open) . Sluice1(Output) + door_status(d2,stuck) . Sluice1(Stuck))
+												 )
+						  )
+	+(mode == Output)  -> (s_ready_wf_out2(s1) . ( r_wf_send_sluice2(s1) . Air_Injection_s1 . (door_status(d1,open) + door_status(d1,stuck) . Sluice1(Stuck)) .
+											       s_ready_wf_out1(s1) . r_wf_rcv_sluice1(s1) . Sluice1(Input)
+											     + r_no_wafer2(s1) . Air_Injection_s1 . (door_status(d1,open) . Sluice1(Input) + door_status(d1,stuck) . Sluice1(Stuck))
+												 )
+						  )
+    +(mode == Stuck)   -> stuck_alarm(s1) . Sluice1(Stuck)
+						);
+	
+proc Sluice2(mode: Sluice_Mode) = s_sluice_sinc . (
+	 (mode == Initial_Sluice) -> ( close_door(d3) . door_status(d3,closed) . close_door(d4) . door_status(d4,closed) . Air_Injection_s2 . 
+						   (door_status(d3,open) . Sluice2(Input) + door_status(d3,stuck) . Sluice2(Stuck))
+						  )
+	+(mode == Input)   -> ( s_ready_wf_in1(s2) . ( r_wf_send_sluice1(s2) . Air_Remove_s2 . (door_status(d4,open) + door_status(d4,stuck) . Sluice2(Stuck)) .
+							                       s_ready_wf_in2(s2) . r_wf_rcv_sluice2(s2) . Sluice2(Output) 
+												 + r_no_wafer1(s2) . Air_Remove_s2 . (door_status(d4,open) . Sluice2(Output) + door_status(d4,stuck) . Sluice2(Stuck))
+												 )
+						  )
+	+(mode == Output)  -> (s_ready_wf_out2(s2) . ( r_wf_send_sluice2(s2) . Air_Injection_s2 . (door_status(d3,open) + door_status(d3,stuck) . Sluice2(Stuck)) .
+											       s_ready_wf_out1(s2) . r_wf_rcv_sluice1(s2) . Sluice2(Input)
+											     + r_no_wafer2(s2) . Air_Injection_s2 . (door_status(d3,open) . Sluice2(Input) + door_status(d3,stuck) . Sluice2(Stuck))
+												 )
+						  )
+    +(mode == Stuck)   -> stuck_alarm(s2) . Sluice2(Stuck)
+						);
+	
+% Waiting Rack Controller
+% Parameters 
+% 	p1, p2: 	Booleans to specify if position 1 and 2 of WR are occupied
+%	ipu_full:	There is a wafer in the IPU
+%	CR:			Counter Request. Count the times that s_no_wafer2 was send. 
+proc WaitingRack(p1,p2,ipu_full: Bool, CR: Count) = 
+	 (p1 == false && p2 == false) -> ( sum s:Sluice.(r_ready_wf_in2(s)  . robot_move(sluice_pos(s),waiting_rack_in)  . robot_finish(r2) . s_wf_rcv_sluice2(s)) . WaitingRack(true,false,ipu_full,zero)
+									 + (ipu_full == false || not_overflow(CR)) ->  sum s:Sluice.(r_ready_wf_out2(s) . s_no_wafer2(s)) . WaitingRack(false,false,ipu_full,inc(CR))
+									 + r_ipu_ready_out . robot_move(ipu,waiting_rack_out) . robot_finish(r3) . s_wf_rcv_print . WaitingRack(false,true,false,CR)
+									 )
+	+(p1 == true  && p2 == false) -> ( r_ipu_ready_in  . robot_move(waiting_rack_in,ipu)  . robot_finish(r3) . s_wf_send_print . WaitingRack(false,false,true,CR)
+									 + r_ipu_ready_out . robot_move(ipu,waiting_rack_out) . robot_finish(r3) . s_wf_rcv_print  . WaitingRack(true,true,false,CR)
+									 )
+	+(p1 == false && p2 == true)  -> ( sum s:Sluice.(r_ready_wf_in2(s)  . robot_move(sluice_pos(s),waiting_rack_in)  . robot_finish(r2) . s_wf_rcv_sluice2(s))  . WaitingRack(true,true,ipu_full,zero)
+									 + sum s:Sluice.(r_ready_wf_out2(s) . robot_move(waiting_rack_out,sluice_pos(s)) . robot_finish(r2) . s_wf_send_sluice2(s)) . WaitingRack(false,false,ipu_full,CR)
+									 )
+	+(p1 == true  && p2 == true)  -> ( r_ipu_ready_in  . robot_move(waiting_rack_in,ipu)  . robot_finish(r3) . s_wf_send_print . WaitingRack(false,true,true,CR)
+									 + sum s:Sluice.(r_ready_wf_out2(s) . robot_move(waiting_rack_out,sluice_pos(s)) . robot_finish(r2) . s_wf_send_sluice2(s)) . WaitingRack(true,false,ipu_full,CR)
+									 );
+						  
+% IPU and Main Room Controller
+% Parameters 
+% 	mode: 	Specify the Room Mode. Initial, Extract_Air_Room or Normal modes.
+proc IPU_Room_Controller(mode: Room_mode) = 
+	(mode == Initial_Room) -> (r_start_process . IPU_Room_Controller(Extract_Air_Room)) +
+	(mode == Extract_Air_Room) -> (activate_roomPump(remove_air) . pressure_room(high) . 
+						  s_main_room_ready . IPU_Room_Controller(Normal_Room)) +
+	(mode == Normal_Room)  -> (s_ipu_ready_in . r_wf_send_print . activate_IPU . IPU_finish . s_ipu_ready_out . r_wf_rcv_print . 
+						  IPU_Room_Controller(Normal_Room));% + pressure_room(low) . IPU_Room_Controller(Extract_Air_Room));
+
+init
+	hide(
+	  {
+		c_wf_send_sluice1,
+		c_wf_send_sluice2,
+		c_wf_rcv_sluice1,
+		c_wf_rcv_sluice2,
+		c_no_wafer1,
+		c_no_wafer2,
+		c_start_process,
+		c_ready_wf_in1,
+		c_ready_wf_in2,
+		c_ready_wf_out1,
+		c_ready_wf_out2,	
+		c_main_room_ready,
+		c_ipu_ready_out,
+		c_ipu_ready_out,
+		c_wf_send_print,
+		c_wf_rcv_print,
+		c_sluice_sinc
+	  },
+	allow(
+	  {
+	    in_wafer_detect,
+		robot_move,
+		robot_finish,
+		activate_IPU,
+		IPU_finish,
+		activate_roomPump,
+		pressure_room,
+		open_door,
+		close_door,
+		activate_sluicePump,
+		pressure_sluice,
+		door_status,
+		stuck_alarm,
+		c_wf_send_sluice1,
+		c_wf_send_sluice2,
+		c_wf_rcv_sluice1,
+		c_wf_rcv_sluice2,
+		c_no_wafer1,
+		c_no_wafer2,
+		c_start_process,
+		c_ready_wf_in1,
+		c_ready_wf_in2,
+		c_ready_wf_out1,
+		c_ready_wf_out2,	
+		c_main_room_ready,
+		c_ipu_ready_out,
+		c_ipu_ready_in,
+		c_wf_send_print,
+		c_wf_rcv_print,
+		c_sluice_sinc
+	  },
+	comm(
+	  {
+		s_wf_send_sluice1 | r_wf_send_sluice1 -> c_wf_send_sluice1,
+		s_wf_send_sluice2 | r_wf_send_sluice2 -> c_wf_send_sluice2,
+		s_wf_rcv_sluice1  | r_wf_rcv_sluice1  -> c_wf_rcv_sluice1,
+		s_wf_rcv_sluice2  | r_wf_rcv_sluice2  -> c_wf_rcv_sluice2,
+		s_no_wafer1       | r_no_wafer1 	  -> c_no_wafer1,
+		s_no_wafer2       | r_no_wafer2 	  -> c_no_wafer2,
+		s_start_process   | r_start_process  -> c_start_process,
+		s_ready_wf_in1	  |	r_ready_wf_in1 	  -> c_ready_wf_in1,
+		s_ready_wf_in2	  |	r_ready_wf_in2 	  -> c_ready_wf_in2,
+		s_ready_wf_out1	  |	r_ready_wf_out1   -> c_ready_wf_out1,
+		s_ready_wf_out2	  |	r_ready_wf_out2   -> c_ready_wf_out2,	
+		s_main_room_ready |	r_main_room_ready -> c_main_room_ready,
+		s_ipu_ready_out	  |	r_ipu_ready_out	  -> c_ipu_ready_out,
+		s_ipu_ready_in	  |	r_ipu_ready_in	  -> c_ipu_ready_in,
+		s_wf_send_print	  |	r_wf_send_print   -> c_wf_send_print,
+		s_wf_rcv_print	  |	r_wf_rcv_print 	  -> c_wf_rcv_print,
+		s_sluice_sinc     |	r_sluice_sinc     -> c_sluice_sinc
+	  },
+		InputRack_Robot1_Controller(Initial,true)||IPU_Room_Controller(Initial_Room)||Sluice1(Initial_Sluice)||Sluice2(Initial_Sluice)||WaitingRack(false,false,false,zero)
+	)));

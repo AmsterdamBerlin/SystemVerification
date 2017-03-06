@@ -1,0 +1,68 @@
+% Model of Robot 2 and Robot 3 Controller
+
+sort sluice = struct s1 | s2;
+	 robot  = struct r1 | r2 | r3;
+	 %position = struct p1 | p2; % p1->in, p2->p2
+	 
+	 Input_mode = struct Initial | Normal | Final;
+
+	 %external actions
+act  r2_wafer_in,
+	 r2_wafer_out : sluice;
+	 r3_wafer_in,
+	 r3_wafer_out;
+	 robot_finish_state : robot;
+	 
+	 %p1ternal actions C2 to C1
+	 s_wf_send_sluice2 : sluice; %sluice is occupied with a processed wf 
+	 s_wf_rcv_sluice2 : sluice; %sluice is empty & waitR is occupied with a new wf
+	 s_no_wafer2 : sluice; %no processed wafer p1 waitR
+	 %C2 to C3
+	 s_wf_sent_print; %IPU is occupied with a new wf & position p1 waitR is empty
+	 s_wf_rcv_print; %IPU is empty & position p1 waitR is occupied with a processed wf 
+	 %C1 to C2
+	 r_ready_wf_out2 : sluice; %sluice is occupied with a processed wf
+	 r_ready_wf_in2 : sluice; %sluice is occupied with a new wf
+	 
+	 time_out;
+	 
+	 %C3 to C2
+	 r_wf_printed; %wf p1 IPU is processed, from position p1 waitR   
+	 
+proc Robot (m : Input_mode) = 
+		(m == Initial) -> ((r_ready_wf_in2(s1) . r2_wafer_in(s1) . robot_finish_state(r2) .
+								s_wf_rcv_sluice2(s1) . s_no_wafer2(s1) . 
+									r3_wafer_in . robot_finish_state(r3) . s_wf_sent_print . 
+										(r_ready_wf_in2(s1) . r2_wafer_in(s1) + r_ready_wf_in2(s2) . r2_wafer_in(s2)) . 
+											robot_finish_state(r2) . (r_ready_wf_in2(s1) . s_no_wafer2(s1) 
+												+ r_ready_wf_in2(s2) . s_no_wafer2(s2)))
+						    +(r_ready_wf_in2(s2) . r2_wafer_in(s2) . robot_finish_state(r2) .
+								s_wf_rcv_sluice2(s2) . s_no_wafer2(s2) .
+									r3_wafer_in . robot_finish_state(r3) . s_wf_sent_print . 
+										(r_ready_wf_in2(s2) . r2_wafer_in(s2) + r_ready_wf_in2(s1) . r2_wafer_in(s1)) . 
+											robot_finish_state(r2) . (r_ready_wf_in2(s1) . s_no_wafer2(s1) 
+												+ r_ready_wf_in2(s2) . s_no_wafer2(s2)))) 
+							. Robot(Normal)
+		 +(m == Normal) -> (r_wf_printed . r3_wafer_out . robot_finish_state(r3) . s_wf_rcv_print . 
+								r3_wafer_in . robot_finish_state(r3) . s_wf_sent_print . 	
+									((r_ready_wf_in2(s1) . r2_wafer_in(s1) . robot_finish_state(r2) . s_wf_rcv_sluice2(s1)
+									+ r_ready_wf_in2(s2) . r2_wafer_in(s2) . robot_finish_state(r2) . s_wf_rcv_sluice2(s2)
+									+ time_out. Robot(Final)) . 
+										(r_ready_wf_out2(s2) . r2_wafer_out(s2) . robot_finish_state(r2) . s_wf_send_sluice2(s2)
+										+ r_ready_wf_out2(s1) . r2_wafer_out(s1) . robot_finish_state(r2) . s_wf_send_sluice2(s1))))
+							. Robot(Normal)
+		 +(m == Final) -> (r_wf_printed . r3_wafer_out . robot_finish_state(r3) . s_wf_rcv_print . 
+								r3_wafer_in . robot_finish_state(r3) . s_wf_sent_print .  						
+									(r_ready_wf_out2(s2) . r2_wafer_out(s2) . robot_finish_state(r2) . s_wf_send_sluice2(s2)
+									+ r_ready_wf_out2(s1) . r2_wafer_out(s1) . robot_finish_state(r2) . s_wf_send_sluice2(s1))) . 
+							(r_wf_printed . r3_wafer_out . robot_finish_state(r3) . s_wf_rcv_print . 		
+									(r_ready_wf_out2(s2) . r2_wafer_out(s2) . robot_finish_state(r2) . s_wf_send_sluice2(s2)
+									+ r_ready_wf_out2(s1) . r2_wafer_out(s1) . robot_finish_state(r2) . s_wf_send_sluice2(s1)))
+							. Robot(Initial);
+				
+
+		
+init Robot(Initial);
+
+
+		

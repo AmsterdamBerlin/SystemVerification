@@ -1,0 +1,71 @@
+% Model of Robot 2 and Robot 3 Controller
+
+sort sluice = struct s1 | s2;
+	 robot  = struct r1 | r2 | r3;
+	 position = struct empty | occupied;
+	 
+%var  s : sluice;
+%	  p : position; 
+%eqn
+ 
+%specify robot_finish_state for each robot: r1_finish_state, r2_finish_state, r3_finish_state
+	 
+	 %robot 2 and robot 3 actions
+act  r2_sluice_to_waitR,
+	 r2_waitR_to_sluice : sluice#position;
+	 r3_waitR_to_IPU,
+	 r3_IPU_to_waitR : position;
+	 r3_finish_state, r2_finish_state;
+	 
+	 %internal actions between controller 1 and controller 2
+	 ready_wf_send1,
+	 ready_rcv_wf1,
+	 rescue_stuck_wf,
+	 send_wf_out,
+	 rcv_wf_in : sluice;
+	 
+	 %internal actions between controller 2 and controller 3
+	 wf_send_to_print,
+	 wf_rcv_printed,
+	 wf_printed;
+	 
+	 %extra| these have no common type
+	 %Into_IPU : sluice#position;
+	 %Out_IPU : sluice#position;
+	 
+proc %robot 2 process: transfer new wafers from sluices to waitR
+	 %and transfer printed wafers from waitR to sluices.
+	 Robot2(s:sluice, p:position) = (sum s: sluice, p:position. 
+		((s == s1) -> 
+			(((p == empty) -> ready_wf_send1(s).r2_finish_state.
+				r2_sluice_to_waitR(s,p).r2_finish_state.wf_send_to_print) +
+					((p == occupied) -> ready_rcv_wf1(s).r2_finish_state.
+						r2_waitR_to_sluice(s,p).r2_finish_state.send_wf_out(s))) +
+		(s == s2) ->
+			(((p == occupied) -> ready_rcv_wf1(s).r2_finish_state.
+				r2_waitR_to_sluice(s,p).r2_finish_state.send_wf_out(s)) +
+					((p == empty) -> r2_finish_state.ready_wf_send1(s).
+						r2_sluice_to_waitR(s,p).r2_finish_state.wf_send_to_print)))).
+		Robot2(s,p);
+	 
+	 %robot 3 process: transfer new wafers from waitR to IPU
+	 %and transfer printed wafers from IPU to waitR.
+	 Robot3(p:position) = (sum p: position. 
+		(((p == occupied) -> 
+			r3_finish_state. r3_waitR_to_IPU(p)) + 
+				((p == empty) -> wf_printed. r3_IPU_to_waitR(p)))).
+		Robot3(p);
+		
+init 
+		allow({r2_sluice_to_waitR, r3_waitR_to_IPU, ready_wf_send1, 
+		ready_rcv_wf1, rescue_stuck_wf,send_wf_out, rcv_wf_in, wf_send_to_print,
+		 wf_rcv_printed, wf_printed, r3_IPU_to_waitR, r2_waitR_to_sluice,
+		 r3_finish_state, r2_finish_state},
+			
+				Robot2(s1,empty) || Robot3(empty)  
+			
+		)
+	;
+
+
+		

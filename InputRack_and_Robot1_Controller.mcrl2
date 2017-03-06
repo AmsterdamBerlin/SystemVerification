@@ -1,0 +1,46 @@
+% Model of Input Stage Controller (Input rack, Robot 1, and sluices)
+
+% We first ensure that we can distinguish the doors, and record their position.
+ %Controller 1 Datatype
+sort Sluice_Mode = struct Initial | Empty_input_rack | Normal;
+	Sluice = struct s1 | s2;
+    Door = struct d1 | d2 | s3 | d4;
+    Pressure = struct high | low;
+    DoorStatus = struct open | closed | stuck; %stuck_open | stuck_closed | stuck_half_open;
+    PumpValue = struct remove_air | inject_air;
+    Robot = struct r1 |  r2 | r3;
+
+
+% External actions
+act r1_wafer_in: Sluice;
+	r1_wafer_out: Sluice;
+	robot1_finish_state; %Paramenter not necessary here (onl one robot)
+	input_wafer_detector: Bool;
+
+% Internal actions from/to Sluices Controller
+	s_wf_sent_sluice1: Sluice;
+	s_no_wf_sent1: Sluice;
+	r_ready_wf_out1: Sluice;
+	r_ready_wf_in1: Sluice;
+	r_rescue_wf_1: Sluice; %Check this later   needed?
+	s_start_process2;    %
+
+% Internal actions from/to IPU and Main Roo Controller
+    s_start_process1;
+    r_main_vacuum_working;
+    r_main_room_ready;
+
+% Process describing the behaviour of Input Stage Controller, including Robot1 and Sluices
+proc InputRack_Robot1_Controller(mode: Sluice_Mode, input_wafer: Bool) =
+		(mode == Initial) -> input_wafer_detector(true) . (s_start_process1 | s_start_process2) . r_main_room_ready . InputRack_Robot1_Controller(Normal,true)
+							%A wafer is being moved from the input rack
+		+(mode == Normal) -> (sum s : Sluice.(r_ready_wf_in1(s) . ((input_wafer == true) -> r1_wafer_in(s) . robot1_finish_state . s_wf_sent_sluice1(s)
+																						 <> s_no_wf_sent1(s)) .
+												(sum i:Bool. input_wafer_detector(i) . InputRack_Robot1_Controller(Normal,i))
+											 )
+							%A wafer is being moved to the output rack
+						  + sum s : Sluice. (r_ready_wf_out1(s) . r1_wafer_out(s) . robot1_finish_state . s_wf_rcv_sluice1(s) . InputRack_Robot1_Controller(Normal,input_wafer)));
+
+
+init
+	InputRack_Robot1_Controller(Initial,false);

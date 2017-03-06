@@ -1,0 +1,37 @@
+% Model of IPU and Room controller
+
+% We first ensure that we can distinguish the doors, and record their position.
+sort pressure = struct high | low;
+
+% External actions
+act active_IPU;
+	active_roomPump;
+	IPU_end_signal;
+	pressure_room : pressure;
+
+% Internal actions from/to C1
+	s_main_vacuum_working;
+	s_main_room_ready;
+    r_start_process; %check if this is necessary 
+	r_sluices_stucked;
+	
+% Internal actions from/to C2
+	s_wf_printed;
+	r_wf_sent_print;
+	r_wf_rcv_print;
+
+% Process describing the behaviour of IPU and Room Controller
+proc IPU_Room_Controller_main(ps: pressure) =
+	 (ps == low) -> active_roomPump . s_main_vacuum_working .
+	  pressure_room(high) . s_main_room_ready . IPU_Room_Controller_main(high)
+	  
+	+(ps == high) -> (r_wf_sent_print + pressure_room(low) . IPU_Room_Controller_main(low)). 
+	  active_IPU . IPU_end_signal . s_wf_printed . r_wf_rcv_print . 
+	  IPU_Room_Controller_main(high);
+
+proc IPU_Room_Controller(ps: pressure) = r_start_process . 
+										 IPU_Room_Controller_main(ps);
+	  
+
+init 
+	IPU_Room_Controller(low);

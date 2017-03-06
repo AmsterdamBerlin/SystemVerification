@@ -1,0 +1,98 @@
+% Model of Input Stage Controller (Input rack, Robot 1, and sluices)
+
+% We first ensure that we can distinguish the doors, and record their position.
+ %Controller 1 Datatype
+sort Sluice_Mode = struct Initial | Input | Output | Stuck;
+	Sluice = struct s1 | s2;
+    Door = struct d1 | d2 | d3 | d4;
+    Pressure = struct high | low;
+    DoorStatus = struct open | closed | stuck; %stuck_open | stuck_closed | stuck_half_open;
+    PumpValue = struct remove_air | inject_air;
+    Robot = struct r1 |  r2 | r3;
+
+
+% External actions                           define what is internal and external action
+act	open_door: Door;
+	close_door: Door;
+	active_sluicePump: Sluice # PumpValue;
+	pressure_sluice: Sluice # Pressure;
+	door_state: Door # DoorStatus;
+	alarm;
+
+% Internal actions from/to C1
+	s_ready_wf_in1: Sluice;
+	s_ready_wf_out1: Sluice;
+	r_wf_sent_sluice1: Sluice;
+	r_wf_rcv_sluice1: Sluice;
+    r_no_wf_sent1: Sluice;
+    start_process2;
+
+% Internal actions from/to C3
+	s_ready_wf_in2: Sluice;
+	s_ready_wf_out2: Sluice;
+	r_wf_sent_sluice2: Sluice;
+	r_wf_rcv_sluice2: Sluice;
+    r_no_wf_sent2: Sluice;
+
+proc Air_Injection_s1 =   % Sluice_Out is not good name
+	close_door(d2) . door_state(d2,closed) . active_sluicePump(s1,inject_air) . pressure_sluice(s1,low) .
+	open_door(d1) ;        %. door_state(d1,open);
+
+proc Air_Remove_s1 =     % Sluice_In is not good name
+	close_door(d1) . door_state(d1,closed) . active_sluicePump(s1,remove_air) . pressure_sluice(s1,high) .
+	open_door(d2) ;        %.  door_state(d2,open);
+
+proc Air_Injection_s2 =
+	close_door(d4) . door_state(d4,closed) . active_sluicePump(s2,inject_air) . pressure_sluice(s2,low) .
+	open_door(d3) ;       % . door_state(d3,open);
+
+proc Air_Remove_s2 =
+	close_door(d3) . door_state(d3,closed) . active_sluicePump(s2,remove_air) . pressure_sluice(s2,high) .
+	open_door(d4) ;       %  . door_state(d4,open);
+
+%  Process for Sluice1
+proc Sluice1(mode: Sluice_Mode) =
+	% This is the initial mode for sluice1
+	 (mode == Initial) -> open_door(d1) . door_state(d1,open) . Sluice1(Input)
+
+	% This is the Input mode for sluice1. It firstly communicates with C1 to see if there is wafer to be in sluice1, then with C3.
+	% if C3 wants to send wafer to Sluice1, then Sluice1 switches into Output mode.
+	+(mode == Input) -> s_ready_wf_in1(s1). r_wf_sent_sluice1(s1) . Air_Remove_s1 .
+	                          ( door_state(d2,open) . ( s_ready_wf_out2(s1) . r_wf_rcv_sluice2(s1) . r_wf_sent_sluice2(s1) . Sluice1(Output) + r_no_wf_sent2(s1) . Air_Injection_s1 .
+	                          ( door_state(d1,open) . Sluice1(Input)  + door_state(d1,stuck) . Sluice1(Stuck) ) )
+	                          + door_state(d2,stuck) . Sluice1(Stuck) )
+
+	% This is the output mode for sluice1. It firstly communicates with C3 to see if there is wafer to be in sluice1, then with C1.
+	% If C1 wants to send wafer to Sluice1, then Sluice1 goes into Input mode.
+	+(mode == Output) -> s_ready_wf_in2(s1) . r_wf_sent_sluice2(s1) . Air_Injection_s1 .
+	                          ( door_state(d1,open) . s_ready_wf_out1(s1) . r_wf_rcv_sluice1(s1) . Sluice1(Input)
+	                          + door_state(d1,stuck) . Sluice1(Stuck) )
+
+    %If Sluice1 gets stuck, the wafer inside will be taken manually , and then setted into Input Mode.
+    +(mode == Stuck) ->  alarm ;    % waiting to revise
+
+% Process for Sluice2
+ Sluice2(mode: Sluice_Mode) =	% This is the initial mode for sluice2
+	 (mode == Initial) -> open_door(d3) . door_state(d3,open) . Sluice2(Input)
+
+	% This is the input mode for sluice2. It firstly communicates with C1 to see if there is wafer to be in sluice2, then with C3.
+	% if C3 wants to send wafer to Sluice2, then Sluice2 goes into Output mode.
+	+(mode == Input) -> s_ready_wf_in1(s2). r_wf_sent_sluice1(s2) . Air_Remove_s2 .
+	                          ( door_state(d3,open) . ( s_ready_wf_out2(s2) . r_wf_rcv_sluice2(s2) . r_wf_sent_sluice2(s2) . Sluice2(Output) + r_no_wf_sent2(s2) . Air_Injection_s2 .
+	                          ( door_state(d3,open) . Sluice2(Input)  + door_state(d3,stuck) . Sluice2(Stuck) ) )
+	                          + door_state(d4,stuck) . Sluice2(Stuck) )
+
+	% This is the output mode for sluice2. It firstly communicate with C3 to see if there is wafer to be in sluice2, then with C1.
+	% If C1 wants to send wafer to Sluice2, then Sluice2 goes into Input mode.
+	+(mode == Output) -> s_ready_wf_in2(s2) . r_wf_sent_sluice2(s2) . Air_Injection_s2.
+	                          ( door_state(d3,open) . s_ready_wf_out1(s2) . r_wf_rcv_sluice1(s2) . Sluice2(Input)
+	                          + door_state(d3,stuck) . Sluice2(Stuck) )
+
+    +(mode == Stuck) ->  alarm ;
+
+proc SluicesController(ps1,ps2: Pressure, ds1, ds2, ds3, ds4: DoorStatus) =
+	  Sluice1(Initial) || Sluice2(Initial);
+init
+	SluicesController(low,low,closed,closed,closed,closed);
+
+
